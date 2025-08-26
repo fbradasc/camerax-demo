@@ -40,6 +40,7 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.ln
+import kotlin.math.exp
 
 import android.graphics.BitmapFactory
 import android.graphics.Bitmap
@@ -318,12 +319,15 @@ class CameraFragment : BaseFragment<FragmentCameraBinding>(R.layout.fragment_cam
                             if (exposure != rlv) {
                                 fetchNewFilmSpeed(requireContext())
                                 fetchNewFilter(requireContext())
+                                fetchNewShutterSpeeds(requireContext())
+                                fetchNewShutterApertures(requireContext())
 
                                 exposure = rlv
 
                                 var dev = getEvFromLv(dlv + filter_stops, film_speed) // LV @ iso ASA + filter compensation
 
-                                val result: Pair<Double, Double> = fitEvInRange(dev)
+                                // val result: Pair<Double, Double> = fitEvInRange(dev)
+                                val result: Pair<Double, Double> = findAvTvPair(allowed_avs, allowed_tvs, dev)
 
                                 val stv = if (result.second <= -(Double.MAX_VALUE-1.0)) {
                                     "<<<"
@@ -625,6 +629,10 @@ class CameraFragment : BaseFragment<FragmentCameraBinding>(R.layout.fragment_cam
             }
         }
 
+        val icv = (contrast * 10.0f).roundToInt()
+
+        targetExif.setAttribute(ExifInterface.TAG_CONTRAST, icv.toString())
+
         targetExif.saveAttributes()
     }
 
@@ -846,6 +854,14 @@ class CameraFragment : BaseFragment<FragmentCameraBinding>(R.layout.fragment_cam
 
         private var filter_color: String = "#000000"
 
+        private var allowed_avs = mutableListOf<Double>(3.5, 4.0, 5.6, 8.0, 11.0, 16.0, 22.0)
+
+        private var allowed_tvs = mutableListOf<Double>(500.0, 250.0, 125.0, 60.0, 30.0, 15.0, 8.0, 4.0, 2.0, 1.0)
+
+        private var shutter_allowed_tv: Set<String> = mutableSetOf<String>()
+
+        private var shutter_allowed_av: Set<String> = mutableSetOf<String>()
+
         public fun getFilmSpeed() = film_speed
 
         public fun invalidateExposure() {
@@ -854,7 +870,8 @@ class CameraFragment : BaseFragment<FragmentCameraBinding>(R.layout.fragment_cam
 
         private fun fetchNewFilmSpeed(context: Context) {
             val newFilmSpeed = PreferenceManager.getDefaultSharedPreferences(context)
-                                                .getString("film_speed", "100")!!
+                                                .getString("film_speed",
+                                                           context.getString(R.string.default_film_speed_value))!!
                                                 .toDouble()
 
             if (newFilmSpeed != film_speed) {
@@ -864,7 +881,8 @@ class CameraFragment : BaseFragment<FragmentCameraBinding>(R.layout.fragment_cam
 
         public fun fetchNewFilter(context: Context) {
             val tokens = PreferenceManager.getDefaultSharedPreferences(context)
-                                          .getString("filter", "#000000:0.0")!!
+                                          .getString("filter",
+                                                     context.getString(R.string.default_filter_value))!!
                                           .split(":").toTypedArray()
 
             if (tokens.size == 2)
@@ -878,18 +896,58 @@ class CameraFragment : BaseFragment<FragmentCameraBinding>(R.layout.fragment_cam
             }
         }
 
+        private fun fetchNewShutterSpeeds(context: Context) {
+            val newVal = PreferenceManager.getDefaultSharedPreferences(context)
+                .getStringSet("shutter_allowed_tv",
+                              HashSet<String>());
+
+            if (newVal != null && newVal != shutter_allowed_tv) {
+                shutter_allowed_tv = newVal
+
+                var a: Array<String> = shutter_allowed_tv.toTypedArray<String>()
+
+                allowed_tvs.clear()
+
+                for (tv in a) {
+                    allowed_tvs.add(tv.toDouble())
+                }
+
+                allowed_tvs.sortDescending()
+            }
+        }
+
+        private fun fetchNewShutterApertures(context: Context) {
+            val newVal = PreferenceManager.getDefaultSharedPreferences(context)
+                .getStringSet("shutter_allowed_av",
+                    HashSet<String>());
+
+            if (newVal != null && newVal != shutter_allowed_av) {
+                shutter_allowed_av = newVal
+
+                var a: Array<String> = shutter_allowed_av.toTypedArray<String>()
+
+                allowed_avs.clear()
+
+                for (av in a) {
+                    allowed_avs.add(av.toDouble())
+                }
+
+                allowed_avs.sort()
+            }
+        }
+
         public fun showSimpleDialog(context: Context, message: String) {
             AlertDialog.Builder(context, R.style.AppTheme_Dialog)
-                .setMessage(message)
-                .setPositiveButton("OK") { dialog, _ -> dialog.dismiss() }
-                .show()
+                       .setMessage(message)
+                       .setPositiveButton("OK") { dialog, _ -> dialog.dismiss() }
+                       .show()
         }
 
         public fun showTimedDialog(context: Context, message: String, durationMs: Long = 2000) {
             val dialog = AlertDialog.Builder(context, R.style.AppTheme_Dialog)
-                .setMessage(message)
-                .setCancelable(false)
-                .create()
+                                    .setMessage(message)
+                                    .setCancelable(false)
+                                    .create()
             dialog.show()
             Handler(Looper.getMainLooper()).postDelayed({
                 dialog.dismiss()
@@ -915,8 +973,28 @@ class CameraFragment : BaseFragment<FragmentCameraBinding>(R.layout.fragment_cam
             }
 
             if (minDiff > 1.0) {
+                //
+                // The best fit is more than a stop far from the scene EV
+                //
                 if (closestPair.first == allowedAvs.first() && closestPair.second == allowedTvs.last()) {
-                    closestPair = Pair(Double.MAX_VALUE, Double.MAX_VALUE)
+                    //
+                    // The best fit is obtained with the widest aperture and longest exposure time
+                    // we are in the range of some seconds of exposure, i.e. in bulb mode
+                    //
+                    // Let's calculate how many seconds we need for a best fit exposure
+                    //
+                    minDiff = Double.MAX_VALUE
+                    for (fitAv in allowedAvs) {
+                        val tv = 1.0 / roundVal(1.0 / calculateTv(fitAv, targetEv), 1.0)
+                        val ev = calculateEv(fitAv, tv)
+                        val diff = kotlin.math.abs(ev - targetEv)
+                        val itv = 1.0 / tv
+                        Log.d(TAG, "    EV Diff: ${minDiff} <-> ${diff} - AV: ${fitAv} - TV: ${itv}")
+                        if (diff < minDiff) {
+                            minDiff = diff
+                            closestPair = Pair(fitAv, tv)
+                        }
+                    }
                 }
                 else
                 if (closestPair.first == allowedAvs.last() && closestPair.second == allowedTvs.first()) {
@@ -930,9 +1008,9 @@ class CameraFragment : BaseFragment<FragmentCameraBinding>(R.layout.fragment_cam
         }
 
         public fun fitEvInRange(ev: Double): Pair<Double, Double> {
-            val allowedAvs = listOf<Double>(/*1.4, 2.8,*/ 3.5, 4.0, 5.6, 8.0, 11.0, 16.0, 22.0)
-            val allowedTvs = listOf<Double>(/*1000.0,*/ 500.0, 250.0, 125.0, 60.0, 30.0, 15.0, 8.0, 4.0, 2.0, 1.0, 0.5, 0.25)
-            return findAvTvPair(allowedAvs, allowedTvs, ev)
+            // val allowedAvs = listOf<Double>(/*1.4, 2.8,*/ 3.5, 4.0, 5.6, 8.0, 11.0, 16.0, 22.0)
+            // val allowedTvs = listOf<Double>(/*1000.0,*/ 500.0, 250.0, 125.0, 60.0, 30.0, 15.0, 8.0, 4.0, 2.0, 1.0, 0.5, 0.25)
+            return findAvTvPair(allowed_avs, allowed_tvs, ev)
         }
 
         private fun convertAvTv(av1: Double, tv1: Double, iso1: Double, iso2: Double): Pair<Double, Double> {
@@ -954,8 +1032,11 @@ class CameraFragment : BaseFragment<FragmentCameraBinding>(R.layout.fragment_cam
             return ( ln( ( av * av ) * tv ) / ln( 2.0 ) )
         }
 
+        private fun calculateTv(av: Double, ev: Double): Double {
+            return (  exp( ev * ln( 2.0 ) ) / ( av * av ) )
+        }
+
         public fun calculateLv(av: Double, tv: Double, sv: Double): Double {
-            // 4.3(100) = 1.8 @ 1/60
             return getLvFromEv(calculateEv(av,tv), sv)
         }
 

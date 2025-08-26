@@ -3,7 +3,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto">
 
     <ListPreference
-        android:defaultValue="400"
+        android:defaultValue="@string/default_film_speed_value"
         android:entries="@array/film_speed_labels"
         android:entryValues="@array/film_speed_values"
         android:key="film_speed"
@@ -11,11 +11,27 @@
         app:persistent="true"
         app:useSimpleSummaryProvider="true" />
     <ListPreference
-        android:defaultValue="#000000:0"
+        android:defaultValue="@string/default_filter_value"
         android:entries="@array/filter_labels"
         android:entryValues="@array/filter_values"
         android:key="filter"
         android:title="@string/filter_title"
         app:persistent="true"
         app:useSimpleSummaryProvider="true" />
+    <MultiSelectListPreference
+        android:defaultValue="@array/synchro_compur_3_5_aperture_values"
+        android:entries="@array/aperture_values_labels"
+        android:entryValues="@array/aperture_values"
+        android:key="shutter_allowed_av"
+        android:title="@string/aperture_values_title"
+        app:persistent="true"
+        app:useSimpleSummaryProvider="false" />
+    <MultiSelectListPreference
+        android:defaultValue="@array/rolleiflex_3_5_shutter_values"
+        android:entries="@array/shutter_values_labels"
+        android:entryValues="@array/shutter_values"
+        android:key="shutter_allowed_tv"
+        android:title="@string/shutter_values_title"
+        app:persistent="true"
+        app:useSimpleSummaryProvider="false" />
 </PreferenceScreen>

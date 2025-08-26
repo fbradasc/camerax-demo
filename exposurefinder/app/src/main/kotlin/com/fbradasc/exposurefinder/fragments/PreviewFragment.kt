@@ -31,8 +31,14 @@ class PreviewFragment : BaseFragment<FragmentPreviewBinding>(R.layout.fragment_p
                 val tv = exif.getAttribute(ExifInterface.TAG_EXPOSURE_TIME)
                 val av = exif.getAttribute(ExifInterface.TAG_F_NUMBER)
                 val sv = exif.getAttribute(ExifInterface.TAG_PHOTOGRAPHIC_SENSITIVITY)
+                val cv = exif.getAttribute(ExifInterface.TAG_CONTRAST)
 
                 if ((tv != null) && (sv != null) && (av != null)) {
+                    var dcv = 1.0
+                    if (cv != null) {
+                        dcv = cv.toDouble() / 10.0
+                    }
+                    val rcv = CameraFragment.roundVal(dcv, 10.0)
                     val dtv = ( 1.0 / tv.toDouble() ).toDouble()
                     val dav = av.toDouble()
                     val dsv = sv.toDouble()
@@ -62,7 +68,8 @@ class PreviewFragment : BaseFragment<FragmentPreviewBinding>(R.layout.fragment_p
 
                     val msg = "LV: ${rlv} -> EV: ${rev} @ ${isv} ASA\n\n" +
                               " - TV: ${stv}\n" +
-                              " - AV: ${sav}"
+                              " - AV: ${sav}\n\n" +
+                              "Contrast: ${rcv}"
 
                     CameraFragment.showSimpleDialog(requireContext(), msg)
                 }
